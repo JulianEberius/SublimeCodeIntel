@@ -67,14 +67,11 @@ Configuration files (`~/.codeintel/config' or `project_root/.codeintel/config').
         }
     }
 """
-import os, sys, stat, time, datetime
+import os, sys, stat, time, datetime, collections
 import sublime_plugin, sublime
 import threading
 import logging
-try:
-    from cStringIO import StringIO
-except ImportError:
-    from StringIO import StringIO
+from cStringIO import StringIO
 
 CODEINTEL_HOME_DIR = os.path.expanduser(os.path.join('~', '.codeintel'))
 __file__ = os.path.normpath(os.path.abspath(__file__))
@@ -111,7 +108,7 @@ logging.getLogger("codeintel.db").setLevel(logging.INFO)  # INFO
 for lang in ('css', 'django', 'html', 'html5', 'javascript', 'mason', 'nodejs',
              'perl', 'php', 'python', 'python3', 'rhtml', 'ruby', 'smarty',
              'tcl', 'templatetoolkit', 'xbl', 'xml', 'xslt', 'xul'):
-    logging.getLogger("codeintel."+lang).setLevel(logging.DEBUG)  # DEBUG
+    logging.getLogger("codeintel." + lang).setLevel(logging.DEBUG)  # DEBUG
 log.setLevel(logging.ERROR)  # ERROR
 
 cpln_fillup_chars = {
@@ -140,6 +137,9 @@ sentinel = {}
 status_msg = {}
 status_lineno = {}
 status_lock = threading.Lock()
+
+HISTORY_SIZE = 64
+jump_history_by_window = {}  # map of window id -> collections.deque([], HISTORY_SIZE)
 
 
 def pos2bytes(content, pos):
@@ -338,9 +338,32 @@ class GotoPythonDefinition(sublime_plugin.TextCommand):
                         codeintel_log.debug(msg)
 
                         window = sublime.active_window()
+                        if window.id() not in jump_history_by_window:
+                            jump_history_by_window[window.id()] = collections.deque([], HISTORY_SIZE)
+                        jump_history = jump_history_by_window[window.id()]
+
+                        # Save current position so we can return to it
+                        row, col = view.rowcol(view.sel()[0].begin())
+                        current_location = "%s:%d" % (file_name, row + 1)
+                        jump_history.append(current_location)
+
                         window.open_file(path, sublime.ENCODED_POSITION)
                         window.open_file(path, sublime.ENCODED_POSITION)
+
         codeintel(view, path, content, lang, pos, ('defns',), _trigger)
+
+
+class BackToPythonDefinition(sublime_plugin.TextCommand):
+    def run(self, edit, block=False):
+
+        window = sublime.active_window()
+        if window.id() in jump_history_by_window:
+            jump_history = jump_history_by_window[window.id()]
+
+            if len(jump_history) > 0:
+                previous_location = jump_history.pop()
+                window = sublime.active_window()
+                window.open_file(previous_location, sublime.ENCODED_POSITION)
 
 _ci_envs_ = {}
 _ci_mgr_ = None
@@ -774,14 +797,14 @@ def tryGetMTime(filename):
 
 def _get_git_revision(path):
     path = os.path.join(path, '.git')
-    revision_file = os.path.join(path, 'refs', 'heads', 'master')
-    if not os.path.exists(revision_file):
-        return None
-    fh = open(revision_file, 'r')
-    try:
-        return fh.read().strip()
-    finally:
-        fh.close()
+    if os.path.exists(path):
+        revision_file = os.path.join(path, 'refs', 'heads', 'master')
+        if os.path.isfile(revision_file):
+            fh = open(revision_file, 'r')
+            try:
+                return fh.read().strip()
+            finally:
+                fh.close()
 
 
 def get_git_revision(path=None):
@@ -794,5 +817,9 @@ def get_git_revision(path=None):
         rev = _get_git_revision(path)
         if rev:
             return u'GIT-%s' % rev
-        path = os.path.abspath(os.path.join(path, '..'))
+        uppath = os.path.abspath(os.path.join(path, '..'))
+        if uppath != path:
+            path = uppath
+        else:
+            break
     return u'GIT-unknown'

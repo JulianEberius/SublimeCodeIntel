@@ -359,10 +359,14 @@ class PHPLangIntel(CitadelLangIntel, ParenStyleCalltipIntelMixin,
                             prev_text = ac.getTextBackWithStyle(style, max_text_len=15)
                             if DEBUG:
                                 print "prev_text: %r" % (prev_text, )
-                            if prev_text[1] not in ("->", "::", "new", "function",
+                            if (prev_text[1] not in ("new", "function",
                                                     "class", "interface", "implements",
                                                     "public", "private", "protected",
-                                                    "final", "abstract", "instanceof",):
+                                                    "final", "abstract", "instanceof",)
+                                        # For the operator styles, we must use
+                                        # endswith, as it could follow a "()",
+                                        # bug 90846.
+                                        and prev_text[1][-2:] not in ("->", "::",)):
                                 return Trigger(lang, TRG_FORM_CPLN, "functions",
                                                trig_pos, implicit)
                         # If we want implicit triggering on more than 3 chars
@@ -2609,6 +2613,10 @@ class PHPParser:
             p += 1
         return None
 
+    def _unescape_string(self, s):
+        """Unescape a PHP string."""
+        return s.replace("\\\\", "\\")
+
     def _getConstantNameAndType(self, styles, text, p):
         """Work out the constant name and type is, returns these as tuple"""
 
@@ -2634,7 +2642,9 @@ class PHPParser:
                                                          assignmentChar=None)
                 break
             p += 1
-        return constant_name, constant_type
+        # We must ensure the name (which came from a PHP string is unescaped),
+        # bug 90795.
+        return self._unescape_string(constant_name), constant_type
 
     def _addAllVariables(self, styles, text, p):
         while p < len(styles):

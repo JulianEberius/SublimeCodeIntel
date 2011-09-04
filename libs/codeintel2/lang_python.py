@@ -332,6 +332,8 @@ class PythonLangIntel(CitadelLangIntel, ParenStyleCalltipIntelMixin,
     # Used by ProgLangTriggerIntelMixin.preceding_trg_from_pos().
     trg_chars = tuple(" (.")
     
+    citdl_from_literal_type = {"string": "str"}
+
     def async_eval_at_trg(self, buf, trg, ctlr):
         if _xpcom_:
             trg = UnwrapObject(trg)
@@ -539,7 +541,7 @@ class PythonLangIntel(CitadelLangIntel, ParenStyleCalltipIntelMixin,
             paths_from_libname = {"sitelib": [], "envlib": [], "stdlib": []}
             canon_sitelibdir = sitelibdir and normcase(sitelibdir) or None
             canon_prefix = prefix and normcase(prefix) or None
-            canon_libdir = libdir and normcase(libdir) or ""
+            canon_libdir = normcase(libdir)
             canon_libdir_plat_prefix = normcase(join(libdir, "plat-"))
             canon_libdir_lib_prefix = normcase(join(libdir, "lib-"))
             for dir in sys_path:
@@ -962,29 +964,17 @@ class PythonBuffer(CitadelBuffer):
                 if DEBUG: print "trg_from_pos: no: no chars preceding '('"
             return None
         elif last_char == ',':
-            working_text = accessor.text_range(
-                max(0, last_pos - 200), last_pos + 1)
-            if working_text:
-                pos = self._find_unclosed_bracket(working_text, pos)
-                if pos:
+            working_text = accessor.text_range(max(0, last_pos - 200), last_pos)
+            line = self._last_logical_line(working_text)
+            if line:
+                last_bracket = line.rfind("(")
+                if last_bracket >= 0:
+                    pos = (pos - (len(line) - last_bracket))
                     return Trigger(self.lang, TRG_FORM_CALLTIP,
-                               "call-signature", pos, implicit)
-            return None
-
-    def _find_unclosed_bracket(self, line, pos):
-        closed = 0
-        for idx, ch in enumerate(reversed(line[1:])):
-            if ch == '(':
-                if closed > 0:
-                    closed -= 1
-                else:
-                    next_char = line[-1 * (idx + 2)]
-                    if not re.match(r'\w',  next_char):
-                        return None
-                    return pos - idx
-            elif ch == ')':
-                closed += 1
-        return None
+                                   "call-signature", pos, implicit)
+                return None
+            else:
+                return None
 
     def _last_logical_line(self, text):
         lines = text.splitlines(0) or ['']
